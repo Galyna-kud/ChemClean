@@ -132,10 +132,8 @@ ON CONFLICT DO NOTHING;
 
 -- ПАРОЛЬ ДЛЯ ВСІХ: password123
 INSERT INTO employees(full_name,role_id,login,password_hash,phone) VALUES
-  ('Дорошенко А.В.',1,'admin','$2a$10$y9GGx5E631JujzfYmPlsN.dRJ9ETndNPCqQC/MxdB3QEn7fcoFC9u','+380671110001'),
-  ('Коваленко Оксана',2,'kovalenko','$2a$10$y9GGx5E631JujzfYmPlsN.dRJ9ETndNPCqQC/MxdB3QEn7fcoFC9u','+380672220002'),
-  ('Мельник Тарас',3,'melnyk','$2a$10$y9GGx5E631JujzfYmPlsN.dRJ9ETndNPCqQC/MxdB3QEn7fcoFC9u','+380673330003'),
-  ('Бондаренко Лариса',4,'bondarenko','$2a$10$y9GGx5E631JujzfYmPlsN.dRJ9ETndNPCqQC/MxdB3QEn7fcoFC9u','+380674440004')
+  ('Наталія Коваль',1,'admin','$2a$10$y9GGx5E631JujzfYmPlsN.dRJ9ETndNPCqQC/MxdB3QEn7fcoFC9u','+380671110001'),
+  ('Коваленко Оксана',2,'kovalenko','$2a$10$y9GGx5E631JujzfYmPlsN.dRJ9ETndNPCqQC/MxdB3QEn7fcoFC9u','+380672220002')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO clients(full_name,phone,email,address,loyalty_points) VALUES

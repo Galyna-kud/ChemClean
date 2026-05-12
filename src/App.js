@@ -2,6 +2,23 @@ import React, { useState, useEffect, useCallback, createContext, useContext } fr
 
 // ═══ UTILS ════════════════════════════════════════════════════════════════════
 const fmt$  = n => `${Number(n).toLocaleString('uk-UA')} ₴`;
+
+function detectMaterial(text) {
+  const t = (text || '').toLowerCase();
+  if (/шкір|замш|нубук/.test(t))               return { mode:'Делікатна хімчистка', tip:'Спеціальний засіб для шкіри, без води', color:'#92400e', bg:'#faeeda' };
+  if (/вовн|кашемір/.test(t))                   return { mode:'Суха хімчистка', tip:'Не вище 30°C, без відкручування', color:'#1e40af', bg:'#eff6ff' };
+  if (/шовк|атлас|шифон|органза/.test(t))       return { mode:'Ручне делікатне прання', tip:'Холодна вода, без механічного впливу', color:'#5b21b6', bg:'#f5f3ff' };
+  if (/пух|пуховик/.test(t))                    return { mode:'Режим пухових виробів', tip:'Спеціальні кульки при сушінні, 60°C', color:'#065f46', bg:'#ecfdf5' };
+  if (/джинс|денім/.test(t))                    return { mode:'Машинне прання 40°C', tip:'Вивернути навиворіт, темні окремо', color:'#374151', bg:'#f9fafb' };
+  if (/бавовн|льон|хб|х\/б/.test(t))            return { mode:'Машинне прання 40–60°C', tip:'Стандартний цикл', color:'#166534', bg:'#f0fdf4' };
+  if (/синтет|поліест|нейлон|акрил/.test(t))    return { mode:'Делікатне прання 30°C', tip:'Без сильного відкручування', color:'#1e40af', bg:'#eff6ff' };
+  if (/хутр|норк|лисиц|каракул/.test(t))        return { mode:'Спеціальна обробка хутра', tip:'Тільки суха хімчистка', color:'#7c3aed', bg:'#f5f3ff' };
+  if (/оксамит|бархат/.test(t))                 return { mode:'Суха хімчистка', tip:'Не тиснути в мокрому стані', color:'#9d174d', bg:'#fdf2f8' };
+  if (/взуття|кросів|черевик|туфл|чобот/.test(t)) return { mode:'Ручне чищення взуття', tip:'Засіб залежно від матеріалу', color:'#92400e', bg:'#faeeda' };
+  if (/ковдр|підодіяльник|постільн/.test(t))    return { mode:'Прання 60°C', tip:'Гіпоалергенний засіб', color:'#065f46', bg:'#ecfdf5' };
+  if (/штор|гардин/.test(t))                    return { mode:'Делікатне прання 30°C', tip:'Вологе розпрямлення після прання', color:'#0369a1', bg:'#e0f2fe' };
+  return null;
+}
 const fmtD  = s => s ? new Date(s).toLocaleDateString('uk-UA') : '—';
 const today = () => new Date().toISOString().split('T')[0];
 const uid   = () => Math.random().toString(36).slice(2, 8);
@@ -53,8 +70,11 @@ const API = {
   addService:    d   => req('POST',  '/services', d),
   updatePrice:  (id,p)=> req('PATCH',`/services/${id}/price`, { basePrice:p }),
   toggleService: id  => req('PATCH', `/services/${id}/toggle`, {}),
-  getReports:    p   => req('GET',   `/reports/summary?period=${p||'all'}`),
-  getChemicals:  ()  => req('GET',   '/chemicals'),
+  getReports:       p    => req('GET',   `/reports/summary?period=${p||'all'}`),
+  getChemicals:     ()   => req('GET',   '/chemicals'),
+  getNotifications: ()   => req('GET',   '/notifications'),
+  markRead:         id   => req('PATCH', `/notifications/${id}/read`),
+  markAllRead:      ()   => req('PATCH', '/notifications/read-all'),
 };
 
 // ═══ AUTH CONTEXT ═════════════════════════════════════════════════════════════
@@ -97,9 +117,36 @@ function AIBadge({ text='AI' }) {
   return <span style={{ display:'inline-flex', alignItems:'center', gap:3, background:'#eeedfe', color:'#534ab7', borderRadius:100, padding:'2px 8px', fontSize:10, fontWeight:600, border:'.5px solid #afa9ec' }}>✦ {text}</span>;
 }
 
+
+function ChemAlert({ onClose }) {
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.4)', zIndex:9998, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ background:'#fff', borderRadius:16, padding:28, width:400, boxShadow:'0 20px 50px rgba(0,0,0,.2)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+          <span style={{ fontSize:28 }}>⚠️</span>
+          <div style={{ fontWeight:700, fontSize:16 }}>Низький запас хімікатів</div>
+        </div>
+        <p style={{ fontSize:13, color:'#64748b', marginBottom:16 }}>Наступні хімікати нижче мінімального порогу і потребують поповнення:</p>
+        <div id="chem-alert-list"/>
+        <button onClick={onClose} style={{ ...Btn(), width:'100%', justifyContent:'center', marginTop:4 }}>Зрозуміло</button>
+      </div>
+    </div>
+  );
+}
+
+const getAISettings = () => { try { const s = JSON.parse(localStorage.getItem('cc_settings')||'{}'); return { aiLoyalty: s.aiLoyalty ?? true, aiForecast: s.aiForecast ?? true, aiMaterial: s.aiMaterial ?? false }; } catch { return { aiLoyalty:true, aiForecast:true, aiMaterial:false }; } };
+
 // ═══ SIDEBAR ═════════════════════════════════════════════════════════════════
+const ROLE_PAGES = {
+  'Адміністратор': null,
+  'Приймальник':   ['orders', 'kanban', 'clients', 'services'],
+};
+
 function Sidebar({ page, setPage, user, onLogout, activeCount, readyCount }) {
-  const sections = [
+  const ai = getAISettings();
+  const allowedPages = ROLE_PAGES[user?.role];
+
+  const allSections = [
     { title:'Головне', items:[
       { key:'dashboard',    label:'Дашборд',         icon:'⊞' },
       { key:'orders',       label:'Замовлення',      icon:'📋', badge:activeCount, bc:'#1a6cf6' },
@@ -107,18 +154,20 @@ function Sidebar({ page, setPage, user, onLogout, activeCount, readyCount }) {
     ]},
     { title:'Клієнти', items:[
       { key:'clients',      label:'Клієнти',         icon:'👥' },
-      { key:'loyalty',      label:'Лояльність',      icon:'★',  ai:true },
+      ...(ai.aiLoyalty ? [{ key:'loyalty', label:'Лояльність', icon:'★', ai:true }] : []),
     ]},
-    { title:'Виробництво', items:[
-      { key:'technologist', label:'Технолог',        icon:'⚙' },
-      { key:'forecast',     label:'Прогнозування',   icon:'📈', ai:true },
-    ]},
+    ...(ai.aiForecast ? [{ title:'Аналітика', items:[{ key:'forecast', label:'Прогнозування', icon:'📈', ai:true }] }] : []),
     { title:'Адміністрація', items:[
       { key:'reports',      label:'Звіти',           icon:'📊' },
       { key:'services',     label:'Прейскурант',     icon:'💰' },
       { key:'settings',     label:'Налаштування',    icon:'⚙️' },
     ]},
   ];
+
+  const sections = allSections.map(sec => ({
+    ...sec,
+    items: sec.items.filter(item => allowedPages === null || allowedPages.includes(item.key)),
+  })).filter(sec => sec.items.length > 0);
 
   return (
     <div style={{ width:220, background:'#0d1b2a', display:'flex', flexDirection:'column', flexShrink:0, minHeight:'100vh' }}>
@@ -184,10 +233,6 @@ function LoginPage() {
           ))}
           <button type="submit" disabled={loading} style={{ ...Btn(), width:'100%', justifyContent:'center', padding:12, fontSize:14, opacity:loading?.7:1 }}>{loading?'Вхід…':'Увійти'}</button>
         </form>
-        <div style={{ marginTop:20, background:'#f8fafc', borderRadius:8, padding:'12px 14px', fontSize:12, color:'#64748b' }}>
-          <div style={{ fontWeight:500, marginBottom:4 }}>Тестові акаунти (пароль: password123)</div>
-          <div>admin · kovalenko · melnyk · bondarenko</div>
-        </div>
       </div>
     </div>
   );
@@ -211,7 +256,6 @@ function DashboardPage({ orders, clients, activeOrders, readyOrders, todayOrders
           <h1 style={{ fontSize:22, fontWeight:700 }}>Дашборд</h1>
           <div style={{ fontSize:12, color:'#64748b', marginTop:3 }}>{new Date().toLocaleDateString('uk-UA',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
         </div>
-        <button style={Btn()} onClick={onNew}>+ Нове замовлення</button>
       </div>
 
       {/* KPI */}
@@ -373,9 +417,8 @@ function KanbanPage({ orders, onNew, onView, onUpdateStatus, onPay }) {
   const nextSt = { 1:STATUSES[1], 2:STATUSES[2] };
   return (
     <div style={{ animation:'fadeIn .22s ease' }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+      <div style={{ marginBottom:16 }}>
         <p style={{ fontSize:13, color:'#64748b' }}>Наочне відображення всіх замовлень за статусами</p>
-        <button style={Btn()} onClick={onNew}>+ Нове замовлення</button>
       </div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12 }}>
         {cols.map(col => {
@@ -521,8 +564,18 @@ function ClientsPage({ clients, orders, onNew, onEdit }) {
   );
 }
 
+const AIDisabled = ({ label }) => (
+  <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:60, gap:12 }}>
+    <div style={{ fontSize:36 }}>✦</div>
+    <div style={{ fontWeight:600, fontSize:16 }}>{label} вимкнено</div>
+    <div style={{ fontSize:13, color:'#94a3b8' }}>Увімкніть функцію в Налаштуваннях → AI-функції та збережіть зміни</div>
+  </div>
+);
+
 // ═══ LOYALTY AI PAGE ══════════════════════════════════════════════════════════
 function LoyaltyPage({ clients, orders }) {
+  if (!getAISettings().aiLoyalty) return <AIDisabled label="AI-аналіз лояльності"/>;
+
   const withStats = clients.map(c => {
     const co = orders.filter(o => o.clientId===c.id);
     const paid = co.filter(o => o.payment);
@@ -695,115 +748,154 @@ function TechPage({ orders, onUpdateStatus }) {
 
 // ═══ FORECAST AI PAGE ═════════════════════════════════════════════════════════
 function ForecastPage({ orders }) {
-  const DAYS = ['Нд','Пн','Вт','Ср','Чт','Пт','Сб'];
-  const dowStats = [0,1,2,3,4,5,6].map(dow=>{
-    const cnt = orders.filter(o=>{
-      if(!o.dateReceived) return false;
-      return new Date(o.dateReceived).getDay()===dow;
-    }).length;
-    return { dow, day:DAYS[dow], cnt };
+  const [chemicals, setChem] = useState([]);
+  useEffect(() => { API.getChemicals().then(setChem).catch(()=>{}); }, []);
+
+  if (!getAISettings().aiForecast) return <AIDisabled label="AI-прогнозування завантаженості"/>;
+
+  const DAYS    = ['Нд','Пн','Вт','Ср','Чт','Пт','Сб'];
+  const MONTHS  = ['Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'];
+
+  // --- завантаженість по днях тижня (реальні дані) ---
+  const dowStats = [0,1,2,3,4,5,6].map(dow => ({
+    dow, day: DAYS[dow],
+    cnt: orders.filter(o => o.dateReceived && new Date(o.dateReceived).getDay() === dow).length,
+  }));
+  const maxDow  = Math.max(...dowStats.map(x => x.cnt), 1);
+  const peakDay = dowStats.reduce((a,b) => b.cnt > a.cnt ? b : a, dowStats[0]);
+
+  // --- тренд по місяцях (реальні дані, 5 місяців) ---
+  const now = new Date();
+  const monthly = Array.from({ length:5 }, (_,i) => {
+    const d   = new Date(now.getFullYear(), now.getMonth() - (4 - i), 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    return { m: MONTHS[d.getMonth()], v: orders.filter(o => o.dateReceived?.startsWith(key)).length };
   });
-  const maxDow = Math.max(...dowStats.map(x=>x.cnt),1);
-  const peakDay = dowStats.reduce((a,b)=>b.cnt>a.cnt?b:a, dowStats[0]);
+  const maxM  = Math.max(...monthly.map(x => x.v), 1);
+  const curV  = monthly[monthly.length-1].v;
+  const prevV = monthly[monthly.length-2].v;
+  const growth = prevV > 0 ? Math.round((curV - prevV) / prevV * 100) : null;
 
-  const monthly = [
-    {m:'Лют',v:22},{m:'Бер',v:31},{m:'Кві',v:28},{m:'Тра',v:orders.filter(o=>o.dateReceived?.startsWith(today().slice(0,7))).length||35},
-  ];
-  const maxM = Math.max(...monthly.map(x=>x.v),1);
+  // --- прогноз на наступний тиждень (на основі середніх по днях) ---
+  const dates       = orders.map(o => o.dateReceived).filter(Boolean).sort();
+  const weeksElapsed = Math.max(1, Math.ceil((now - new Date(dates[0] || now)) / (7*24*60*60*1000)));
+  const avgRev      = orders.length
+    ? orders.reduce((s,o) => s + (parseFloat(o.totalAmount)||0), 0) / orders.length
+    : 0;
 
-  const chemicals = [
-    {name:'Перхлоретилен',days:8,status:'low'},
-    {name:'Уайт-спірит',  days:22,status:'ok'},
-    {name:'Плямовивідник',days:5, status:'low'},
-  ];
+  const WEEKDAYS = ['Понеділок','Вівторок','Середа','Четвер','Пятниця'];
+  const forecast = WEEKDAYS.map((label, i) => {
+    const avg = dowStats[i+1].cnt / weeksElapsed;
+    const rev = Math.round(avg * avgRev / 100) * 100;
+    return { label, avg: avg.toFixed(1), rev };
+  });
+  const peakFc   = forecast.reduce((a,b) => b.rev > a.rev ? b : a, forecast[0]);
+  const weekTotal = forecast.reduce((s,d) => s + d.rev, 0);
+  const maxRevFc  = Math.max(...forecast.map(d => d.rev), 1);
 
   return (
     <div style={{ animation:'fadeIn .22s ease' }}>
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:18 }}>
         <AIBadge text="AI Прогнозування"/>
-        <span style={{ fontSize:13, color:'#64748b' }}>Аналіз сезонності, завантаженості та прогноз на основі历史даних</span>
+        <span style={{ fontSize:13, color:'#64748b' }}>Аналіз сезонності, завантаженості та прогноз на основі реальних даних</span>
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
-        {/* Load by weekday */}
+        {/* Завантаженість по днях тижня */}
         <div style={card}>
           <div style={{ fontWeight:600, fontSize:14, marginBottom:14 }}>📅 Завантаженість по днях тижня</div>
           <div style={{ display:'flex', alignItems:'flex-end', gap:8, height:90, marginBottom:8 }}>
-            {dowStats.map(d=>(
+            {dowStats.map(d => (
               <div key={d.dow} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4, flex:1 }}>
                 <div style={{ borderRadius:'3px 3px 0 0', width:'100%', background: d.dow===peakDay.dow?'#1a6cf6':'#b5d4f4', height:`${Math.max(d.cnt/maxDow*100,4)}%`, transition:'height .5s' }}/>
                 <div style={{ fontSize:10, color:d.dow===peakDay.dow?'#1a6cf6':'#64748b', fontWeight:d.dow===peakDay.dow?700:400 }}>{d.day}</div>
               </div>
             ))}
           </div>
-          <div style={{ background:'#eff6ff', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#1e40af' }}>
-            🔝 Пік — {peakDay.day} ({peakDay.cnt} замовл.). Рекомендуємо ставити 3 співробітники.
-          </div>
+          {peakDay.cnt > 0
+            ? <div style={{ background:'#eff6ff', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#1e40af' }}>
+                🔝 Пік — {peakDay.day} ({peakDay.cnt} замовл.)
+              </div>
+            : <div style={{ background:'#f8fafc', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#94a3b8' }}>
+                Недостатньо даних для аналізу
+              </div>
+          }
         </div>
 
-        {/* Monthly trend */}
+        {/* Тренд по місяцях */}
         <div style={card}>
           <div style={{ fontWeight:600, fontSize:14, marginBottom:14 }}>📈 Тренд замовлень (місяці)</div>
           <div style={{ display:'flex', alignItems:'flex-end', gap:10, height:90, marginBottom:8 }}>
-            {monthly.map((m,i)=>(
+            {monthly.map((m,i) => (
               <div key={m.m} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4, flex:1 }}>
                 <div style={{ fontSize:10, color:'#64748b', marginBottom:2 }}>{m.v}</div>
-                <div style={{ borderRadius:'3px 3px 0 0', width:'100%', background:i===monthly.length-1?'#1d9e75':'#a7d9c0', height:`${m.v/maxM*100}%` }}/>
+                <div style={{ borderRadius:'3px 3px 0 0', width:'100%', background:i===monthly.length-1?'#1d9e75':'#a7d9c0', height:`${Math.max(m.v/maxM*100,4)}%` }}/>
                 <div style={{ fontSize:10, color:'#64748b' }}>{m.m}</div>
               </div>
             ))}
           </div>
-          <div style={{ background:'#f0fdf4', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#166534' }}>
-            ✅ Зростання +12% порівняно з минулим місяцем
-          </div>
+          {growth !== null
+            ? <div style={{ background: growth >= 0 ? '#f0fdf4':'#fef2f2', borderRadius:8, padding:'8px 12px', fontSize:12, color: growth >= 0 ? '#166534':'#dc2626' }}>
+                {growth >= 0 ? '✅' : '📉'} {growth >= 0 ? '+' : ''}{growth}% порівняно з минулим місяцем
+              </div>
+            : <div style={{ background:'#f8fafc', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#94a3b8' }}>Недостатньо даних</div>
+          }
         </div>
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-        {/* Next week forecast */}
+        {/* Прогноз на тиждень */}
         <div style={card}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14 }}>
             <AIBadge text="AI"/>
             <span style={{ fontWeight:600, fontSize:14 }}>Прогноз на наступний тиждень</span>
           </div>
-          {[
-            {day:'Понеділок', orders:'6–8',  revenue:'~3 200 ₴', color:'#b5d4f4'},
-            {day:'Вівторок',  orders:'8–10', revenue:'~4 500 ₴', color:'#85b7eb'},
-            {day:'Середа',    orders:'11–14',revenue:'~6 800 ₴', color:'#1a6cf6', peak:true},
-            {day:'Четвер',    orders:'9–11', revenue:'~5 200 ₴', color:'#378add'},
-            {day:'Пятниця',   orders:'7–9',  revenue:'~3 800 ₴', color:'#85b7eb'},
-          ].map(d=>(
-            <div key={d.day} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
-              <div style={{ fontSize:12, minWidth:80, fontWeight:d.peak?700:400, color:d.peak?'#1a6cf6':'#0f172a' }}>{d.day}{d.peak&&' ★'}</div>
-              <div style={{ flex:1, height:6, background:'#f1f5f9', borderRadius:3, overflow:'hidden' }}>
-                <div style={{ height:'100%', background:d.color, width:d.peak?'90%':d.day==='Понеділок'?'45%':d.day==='Четвер'?'75%':d.day==='Пятниця'?'55%':'65%' }}/>
-              </div>
-              <div style={{ fontSize:11, fontWeight:500, minWidth:70, textAlign:'right' }}>{d.revenue}</div>
+          {avgRev > 0 ? <>
+            {forecast.map(d => {
+              const isPeak = d.label === peakFc.label;
+              return (
+                <div key={d.label} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                  <div style={{ fontSize:12, minWidth:88, fontWeight:isPeak?700:400, color:isPeak?'#1a6cf6':'#0f172a' }}>{d.label}{isPeak?' ★':''}</div>
+                  <div style={{ flex:1, height:6, background:'#f1f5f9', borderRadius:3, overflow:'hidden' }}>
+                    <div style={{ height:'100%', background:isPeak?'#1a6cf6':'#b5d4f4', width:`${Math.max(d.rev/maxRevFc*100,4)}%` }}/>
+                  </div>
+                  <div style={{ fontSize:11, fontWeight:500, minWidth:72, textAlign:'right' }}>~{d.rev.toLocaleString('uk-UA')} ₴</div>
+                </div>
+              );
+            })}
+            <div style={{ background:'#f8fafc', borderRadius:8, padding:'8px 12px', marginTop:10, display:'flex', justifyContent:'space-between', fontSize:13 }}>
+              <span style={{ color:'#64748b' }}>Прогноз на тиждень:</span>
+              <span style={{ fontWeight:700, color:'#1d9e75' }}>~{weekTotal.toLocaleString('uk-UA')} ₴</span>
             </div>
-          ))}
-          <div style={{ background:'#f8fafc', borderRadius:8, padding:'8px 12px', marginTop:10, display:'flex', justifyContent:'space-between', fontSize:13 }}>
-            <span style={{ color:'#64748b' }}>Прогноз на тиждень:</span>
-            <span style={{ fontWeight:700, color:'#1d9e75' }}>~23 500 ₴</span>
-          </div>
+          </> : <div style={{ fontSize:13, color:'#94a3b8', textAlign:'center', padding:24 }}>Недостатньо даних для прогнозу</div>}
         </div>
 
-        {/* Chemical forecast */}
+        {/* Запаси хімікатів (реальні дані) */}
         <div style={card}>
-          <div style={{ fontWeight:600, fontSize:14, marginBottom:14 }}>🧪 Прогноз запасів хімікатів</div>
-          {chemicals.map(c=>(
-            <div key={c.name} style={{ padding:'10px 0', borderBottom:'.5px solid #f1f5f9' }}>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
-                <span style={{ fontSize:13, fontWeight:500 }}>{c.name}</span>
-                <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5, fontWeight:500, background:c.status==='low'?'#fef2f2':'#f0fdf4', color:c.status==='low'?'#dc2626':'#16a34a' }}>
-                  {c.status==='low'?`⚠ Вистачить ~${c.days} дн.`:`✓ Запас ~${c.days} дн.`}
-                </span>
-              </div>
-              <div style={{ height:5, borderRadius:3, background:'#f1f5f9', overflow:'hidden' }}>
-                <div style={{ height:'100%', borderRadius:3, background:c.status==='low'?'#ef4444':'#1d9e75', width:`${Math.min(c.days/30*100,100)}%` }}/>
-              </div>
-            </div>
-          ))}
-          <button style={{ ...Btn('#1a6cf6','#fff','8px 14px'), marginTop:12, width:'100%', justifyContent:'center', fontSize:12 }}>🛒 Оформити замовлення хімікатів</button>
+          <div style={{ fontWeight:600, fontSize:14, marginBottom:14 }}>🧪 Запаси хімікатів</div>
+          {chemicals.length === 0
+            ? <div style={{ fontSize:13, color:'#94a3b8', textAlign:'center', padding:16 }}>Завантаження…</div>
+            : chemicals.map(c => {
+                const pct = Math.min(c.minQuantity > 0 ? c.quantity / c.minQuantity * 100 : 100, 100);
+                return (
+                  <div key={c.id} style={{ padding:'10px 0', borderBottom:'.5px solid #f1f5f9' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+                      <span style={{ fontSize:13, fontWeight:500 }}>{c.name}</span>
+                      <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5, fontWeight:500,
+                        background:c.isLow?'#fef2f2':'#f0fdf4', color:c.isLow?'#dc2626':'#16a34a' }}>
+                        {c.isLow ? `⚠ ${c.quantity} ${c.unit}` : `✓ ${c.quantity} ${c.unit}`}
+                      </span>
+                    </div>
+                    <div style={{ height:5, borderRadius:3, background:'#f1f5f9', overflow:'hidden' }}>
+                      <div style={{ height:'100%', borderRadius:3, background:c.isLow?'#ef4444':'#1d9e75', width:`${pct}%` }}/>
+                    </div>
+                    <div style={{ fontSize:10, color:'#94a3b8', marginTop:3 }}>
+                      Мінімум: {c.minQuantity} {c.unit}
+                    </div>
+                  </div>
+                );
+              })
+          }
         </div>
       </div>
     </div>
@@ -954,14 +1046,14 @@ function ServicesPage({ services, onToggle, onUpdatePrice, onAdd }) {
 
 // ═══ SETTINGS PAGE ════════════════════════════════════════════════════════════
 function SettingsPage({ user }) {
-  const [settings, setSettings] = useState({
-    companyName:'ТОВ Хімчистка Люкс', address:'вул. Франка, 1, Львів', phone:'+380 32 123 45 67',
-    smsOnStatus:true, smsReminder:true, chemAlert:true, emailReport:false,
-    aiLoyalty:true, aiForecast:true, aiMaterial:false,
+  const [settings, setSettings] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('cc_settings')) || {}; } catch { return {}; }
   });
+  const defaults = { companyName:'ТОВ Хімчистка Люкс', address:'вул. Франка, 1, Львів', phone:'+380 32 123 45 67', smsOnStatus:true, smsReminder:true, chemAlert:true, emailReport:false, aiLoyalty:true, aiForecast:true, aiMaterial:false };
+  const s = { ...defaults, ...settings };
   const [saved, setSaved] = useState(false);
-  const tog = k => setSettings(p=>({...p,[k]:!p[k]}));
-  const save = () => { setSaved(true); setTimeout(()=>setSaved(false),2000); };
+  const tog = k => setSettings(p => { const n = {...defaults,...p,[k]:!({...defaults,...p})[k]}; return n; });
+  const save = () => { localStorage.setItem('cc_settings', JSON.stringify(s)); setSaved(true); setTimeout(()=>setSaved(false),2000); };
 
   const Section = ({title,icon,children}) => (
     <div style={{ background:'#fff',border:'.5px solid #e2e8f0',borderRadius:12,marginBottom:14,overflow:'hidden' }}>
@@ -976,8 +1068,8 @@ function SettingsPage({ user }) {
     </div>
   );
   const Toggle = ({k}) => (
-    <button onClick={()=>tog(k)} style={{ width:38,height:22,borderRadius:11,background:settings[k]?'#1a6cf6':'#cbd5e1',border:'none',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0 }}>
-      <div style={{ position:'absolute',width:16,height:16,borderRadius:'50%',background:'#fff',top:3,left:settings[k]?19:3,transition:'left .2s' }}/>
+    <button onClick={()=>tog(k)} style={{ width:38,height:22,borderRadius:11,background:s[k]?'#1a6cf6':'#cbd5e1',border:'none',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0 }}>
+      <div style={{ position:'absolute',width:16,height:16,borderRadius:'50%',background:'#fff',top:3,left:s[k]?19:3,transition:'left .2s' }}/>
     </button>
   );
 
@@ -999,36 +1091,12 @@ function SettingsPage({ user }) {
         ))}
       </Section>
 
-      <Section title="SMS та сповіщення" icon="🔔">
-        <Row label="SMS при зміні статусу" desc="Автоматично надсилати клієнту"><Toggle k="smsOnStatus"/></Row>
-        <Row label="SMS-нагадування за добу" desc="Нагадування про готовність замовлення"><Toggle k="smsReminder"/></Row>
-        <Row label="Алерт низьких хімікатів" desc="Поріг: менше мінімального запасу"><Toggle k="chemAlert"/></Row>
-        <Row label="Email-звіт щопонеділка" desc="Тижневий звіт на email адміністратора"><Toggle k="emailReport"/></Row>
-      </Section>
-
       <Section title="AI-функції" icon="✦">
         <Row label="AI-аналіз лояльності" desc="Автоматичні рекомендації для утримання клієнтів"><Toggle k="aiLoyalty"/></Row>
         <Row label="AI-прогнозування завантаженості" desc="Аналіз сезонності та трендів"><Toggle k="aiForecast"/></Row>
         <Row label="AI-розпізнавання матеріалу" desc="Підбір режиму чищення за описом речі"><Toggle k="aiMaterial"/></Row>
       </Section>
 
-      <Section title="Управління доступом" icon="👥">
-        {[
-          {name:'Дорошенко А.В.',     role:'Адміністратор', login:'admin',      active:true},
-          {name:'Коваленко Оксана',   role:'Приймальник',   login:'kovalenko',  active:true},
-          {name:'Мельник Тарас',      role:'Технолог',      login:'melnyk',     active:true},
-          {name:'Бондаренко Лариса',  role:'Бухгалтер',     login:'bondarenko', active:true},
-        ].map(e=>(
-          <Row key={e.login} label={e.name} desc={`${e.login} · ${e.role}`}>
-            <span style={{ background:e.active?'#f0fdf4':'#f9fafb',color:e.active?'#16a34a':'#6b7280',borderRadius:6,padding:'3px 10px',fontSize:11,fontWeight:500 }}>
-              {e.active?'Активний':'Заблоковано'}
-            </span>
-          </Row>
-        ))}
-        <div style={{ padding:'10px 16px' }}>
-          <button style={{ ...Btn(),'fontSize':12 }}>+ Додати співробітника</button>
-        </div>
-      </Section>
     </div>
   );
 }
@@ -1046,7 +1114,7 @@ function OrderModal({ mode, orderId, orders, clients, services, onClose, onCreat
   const [dProm, setDP]    = useState(ex?.datePromised||'');
   const [selCat,setSC]    = useState(1);
   const [pm,    setPm]    = useState('card');
-  const sub  = items.reduce((s,i)=>s+i.subtotal,0);
+  const sub  = items.reduce((s,i)=>s+Number(i.subtotal),0);
   const da   = Math.round(sub*disc/100);
   const tot  = sub-da;
   const fCl  = clients.filter(c=>(c.fullName||'').toLowerCase().includes(q.toLowerCase())||(c.phone||'').includes(q));
@@ -1054,7 +1122,7 @@ function OrderModal({ mode, orderId, orders, clients, services, onClose, onCreat
   const sCl  = clients.find(c=>c.id===cId);
   const st   = STATUSES.find(s=>s.id===ex?.statusId);
   const nx   = {1:STATUSES[1],2:STATUSES[2]}[ex?.statusId];
-  const addI = s => setItems(p=>[...p,{id:uid(),serviceId:s.id,description:s.name,qty:1,unitPrice:s.basePrice,subtotal:s.basePrice}]);
+  const addI = s => setItems(p=>[...p,{id:uid(),serviceId:s.id,description:s.name,qty:1,unitPrice:Number(s.basePrice),subtotal:Number(s.basePrice)}]);
   const rmI  = id => setItems(p=>p.filter(i=>i.id!==id));
   const uQ   = (id,q) => setItems(p=>p.map(i=>i.id===id?{...i,qty:Number(q),subtotal:Math.round(Number(q)*i.unitPrice)}:i));
   const uD   = (id,d) => setItems(p=>p.map(i=>i.id===id?{...i,description:d}:i));
@@ -1133,10 +1201,15 @@ function OrderModal({ mode, orderId, orders, clients, services, onClose, onCreat
                 <div style={{ fontWeight:600,fontSize:13,marginBottom:10 }}>Позиції ({items.length})</div>
                 <div style={{ maxHeight:200,overflowY:'auto',marginBottom:12,display:'flex',flexDirection:'column',gap:5 }}>
                   {items.length===0&&<div style={{ color:'#94a3b8',fontSize:12,padding:'20px 0',textAlign:'center' }}>Оберіть послуги ліворуч</div>}
-                  {items.map(i=><div key={i.id} style={{ padding:'8px 10px',borderRadius:7,border:'.5px solid #e2e8f0',background:'#f8fafc' }}>
-                    <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center' }}><input value={i.description} onChange={e=>uD(i.id,e.target.value)} style={{ ...inp,padding:'2px 6px',fontSize:11,flex:1,marginRight:8 }}/><button onClick={()=>rmI(i.id)} style={{ background:'none',border:'none',cursor:'pointer',color:'#ef4444',fontSize:14 }}>✕</button></div>
-                    <div style={{ display:'flex',justifyContent:'space-between',marginTop:5,alignItems:'center' }}><div style={{ display:'flex',alignItems:'center',gap:5 }}><span style={{ fontSize:10,color:'#94a3b8' }}>К-ть:</span><input type="number" min="0.1" step="0.1" value={i.qty} onChange={e=>uQ(i.id,e.target.value)} style={{ ...inp,width:50,padding:'2px 5px',fontSize:11 }}/></div><span style={{ fontWeight:600,fontSize:12 }}>{fmt$(i.subtotal)}</span></div>
-                  </div>)}
+                  {items.map(i=>{
+                    const aiOn = (() => { try { return JSON.parse(localStorage.getItem('cc_settings'))?.aiMaterial; } catch { return false; } })();
+                    const mat = aiOn ? detectMaterial(i.description) : null;
+                    return <div key={i.id} style={{ padding:'8px 10px',borderRadius:7,border:`.5px solid ${mat?mat.color+'55':'#e2e8f0'}`,background:'#f8fafc' }}>
+                      <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center' }}><input value={i.description} onChange={e=>uD(i.id,e.target.value)} style={{ ...inp,padding:'2px 6px',fontSize:11,flex:1,marginRight:8 }}/><button onClick={()=>rmI(i.id)} style={{ background:'none',border:'none',cursor:'pointer',color:'#ef4444',fontSize:14 }}>✕</button></div>
+                      {mat && <div style={{ fontSize:10,background:mat.bg,color:mat.color,borderRadius:4,padding:'3px 8px',marginTop:4,display:'flex',gap:6 }}><span>✦ {mat.mode}</span><span style={{ opacity:.75 }}>— {mat.tip}</span></div>}
+                      <div style={{ display:'flex',justifyContent:'space-between',marginTop:5,alignItems:'center' }}><div style={{ display:'flex',alignItems:'center',gap:5 }}><span style={{ fontSize:10,color:'#94a3b8' }}>К-ть:</span><input type="number" min="0.1" step="0.1" value={i.qty} onChange={e=>uQ(i.id,e.target.value)} style={{ ...inp,width:50,padding:'2px 5px',fontSize:11 }}/></div><span style={{ fontWeight:600,fontSize:12 }}>{fmt$(i.subtotal)}</span></div>
+                    </div>;
+                  })}
                 </div>
                 <div style={{ background:'#f8fafc',borderRadius:8,padding:'10px 12px' }}>
                   <div style={{ display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4 }}><span style={{ color:'#64748b' }}>Підсумок:</span><span>{fmt$(sub)}</span></div>
@@ -1204,14 +1277,15 @@ const PAGE_TITLES = {
 
 function MainApp() {
   const { user, logout } = useAuth();
-  const [orders,   setOrders]   = useState([]);
-  const [clients,  setClients]  = useState([]);
-  const [services, setServices] = useState([]);
-  const [loading,  setLoad]     = useState(true);
-  const [err,      setErr]      = useState(null);
-  const [page,     setPage]     = useState('dashboard');
-  const [modal,    setModal]    = useState(null);
-  const [notif,    setNotif]    = useState(null);
+  const [orders,    setOrders]   = useState([]);
+  const [clients,   setClients]  = useState([]);
+  const [services,  setServices] = useState([]);
+  const [loading,   setLoad]     = useState(true);
+  const [err,       setErr]      = useState(null);
+  const [page,      setPage]     = useState(() => user?.role === 'Приймальник' ? 'orders' : 'dashboard');
+  const [modal,     setModal]    = useState(null);
+  const [notif,     setNotif]    = useState(null);
+  const [chemAlert, setChemAlert] = useState(null);
 
   const notify = (msg, type='success') => { setNotif({msg,type}); setTimeout(()=>setNotif(null),3500); };
 
@@ -1221,6 +1295,16 @@ function MainApp() {
       const [o,c,s] = await Promise.all([API.getOrders(), API.getClients(), API.getServices()]);
       setOrders(o); setClients(c); setServices(s);
     } catch(e) { setErr(e.message); } finally { setLoad(false); }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const cfg = getAISettings();
+    if (!cfg.chemAlert) return;
+    API.getChemicals().then(chems => {
+      const low = chems.filter(c => Number(c.quantity) <= Number(c.minQuantity));
+      if (low.length) setChemAlert(low);
+    }).catch(() => {});
   }, [user]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -1238,17 +1322,24 @@ function MainApp() {
   const ready  = orders.filter(o=>o.statusId===3);
   const tod    = orders.filter(o=>o.dateReceived===today());
 
+  if (!(user?.role in ROLE_PAGES)) {
+    return (
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:'100vh', background:'#f1f5f9', flexDirection:'column', gap:16 }}>
+        <div style={{ fontSize:48 }}>🔒</div>
+        <div style={{ fontWeight:700, fontSize:18 }}>Доступ заборонено</div>
+        <div style={{ color:'#64748b', fontSize:14 }}>Ваша роль не має доступу до цієї системи</div>
+        <button onClick={logout} style={{ marginTop:8, padding:'8px 20px', background:'#1a6cf6', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13 }}>Вийти</button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display:'flex', minHeight:'100vh' }}>
       <Sidebar page={page} setPage={setPage} user={user} onLogout={logout} activeCount={active.length} readyCount={ready.length}/>
       <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:'100vh' }}>
         {/* Topbar */}
-        <div style={{ background:'#fff', borderBottom:'.5px solid #e2e8f0', padding:'0 24px', height:54, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, boxShadow:'0 1px 3px rgba(0,0,0,.04)' }}>
+        <div style={{ background:'#fff', borderBottom:'.5px solid #e2e8f0', padding:'0 24px', height:54, display:'flex', alignItems:'center', flexShrink:0, boxShadow:'0 1px 3px rgba(0,0,0,.04)' }}>
           <span style={{ fontSize:16, fontWeight:700 }}>{PAGE_TITLES[page]}</span>
-          <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-            <span style={{ fontSize:12, color:'#64748b' }}>{user?.name} · {user?.role}</span>
-            <button style={Btn()} onClick={()=>setModal({type:'order',mode:'new'})}>+ Нове замовлення</button>
-          </div>
         </div>
         {/* Content */}
         <div style={{ flex:1, padding:'22px 24px', background:'#f1f5f9', overflowY:'auto' }}>
@@ -1275,6 +1366,24 @@ function MainApp() {
 
       {modal?.type==='order'  && <OrderModal  {...modal} orders={orders} clients={clients} services={services} onClose={()=>setModal(null)} onCreate={createOrder} onUpdateStatus={updateStatus} onPay={payOrder}/>}
       {modal?.type==='client' && <ClientModal {...modal} clients={clients} onClose={()=>setModal(null)} onCreate={createClient} onUpdate={updateClient}/>}
+      {chemAlert && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.4)', zIndex:9998, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div style={{ background:'#fff', borderRadius:16, padding:28, width:400, boxShadow:'0 20px 50px rgba(0,0,0,.2)' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+              <span style={{ fontSize:28 }}>⚠️</span>
+              <div style={{ fontWeight:700, fontSize:16 }}>Низький запас хімікатів</div>
+            </div>
+            <p style={{ fontSize:13, color:'#64748b', marginBottom:14 }}>Наступні хімікати нижче мінімального порогу:</p>
+            {chemAlert.map(c => (
+              <div key={c.id} style={{ display:'flex', justifyContent:'space-between', padding:'8px 12px', background:'#fff7ed', borderRadius:8, marginBottom:6, fontSize:13 }}>
+                <span style={{ fontWeight:600 }}>{c.name}</span>
+                <span style={{ color:'#ef4444' }}>{c.quantity} {c.unit} <span style={{ color:'#94a3b8' }}>/ мін {c.minQuantity} {c.unit}</span></span>
+              </div>
+            ))}
+            <button onClick={() => setChemAlert(null)} style={{ ...Btn(), width:'100%', justifyContent:'center', marginTop:14 }}>Зрозуміло</button>
+          </div>
+        </div>
+      )}
       <Toast n={notif}/>
     </div>
   );

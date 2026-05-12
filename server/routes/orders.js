@@ -3,6 +3,12 @@ const { query, pool } = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 
+const STATUS_NAMES = { 1:'Прийнято', 2:'В обробці', 3:'Готове', 4:'Видано' };
+
+async function notify(type, title, message) {
+  try { await query(`INSERT INTO notifications(type,title,message) VALUES($1,$2,$3)`, [type, title, message]); } catch {}
+}
+
 async function fullOrder(id) {
   const r = await query(`
     SELECT o.order_id AS "id", o.order_number AS "orderNumber",
@@ -84,7 +90,12 @@ router.patch('/:id/status', requireAuth, async (req, res, next) => {
     const { statusId } = req.body;
     const completed = statusId === 3 ? new Date().toISOString() : null;
     await query(`UPDATE orders SET status_id=$1, date_completed=$2 WHERE order_id=$3`, [statusId, completed, req.params.id]);
-    res.json(await fullOrder(req.params.id));
+    const o = await fullOrder(req.params.id);
+    const statusName = STATUS_NAMES[statusId] || statusId;
+    await notify('status',
+      `Статус змінено: ${o.orderNumber}`,
+      `Замовлення ${o.orderNumber} клієнта ${o.clientName} → "${statusName}"`);
+    res.json(o);
   } catch (e) { next(e); }
 });
 

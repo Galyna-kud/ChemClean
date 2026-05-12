@@ -8,21 +8,15 @@ const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   max: 10,
-  client_encoding: 'UTF8',
+});
+
+pool.on('connect', client => {
+  client.query("SET client_encoding = 'UTF8'");
 });
 
 pool.connect((err, client, release) => {
-  if (err) {
-    console.error('❌ Помилка PostgreSQL:', err.message);
-    return;
-  }
-
+  if (err) { console.error('❌ Помилка PostgreSQL:', err.message); return; }
   console.log('✅ PostgreSQL підключено');
-
-  client.query('SHOW client_encoding', (e, res) => {
-    console.log('ENCODING:', res?.rows);
-  });
-
   release();
 });
 

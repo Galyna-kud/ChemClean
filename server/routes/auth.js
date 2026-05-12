@@ -21,7 +21,7 @@ router.post('/login', async (req, res, next) => {
     if (!u.is_active) return res.status(403).json({ error: 'Акаунт заблоковано' });
     const ok = await bcrypt.compare(password, u.password_hash);
     if (!ok) return res.status(401).json({ error: 'Невірний логін або пароль' });
-    const payload = { id: u.employee_id, name: u.full_name, login: u.login, role: u.role, canAdmin: u.canAdmin };
+const payload = { id: u.employee_id, name: u.full_name, login: u.login, role: u.role, canAdmin: u.canAdmin };
     const token = jwt.sign(payload, SECRET, { expiresIn: '12h' });
     res.json({ token, user: payload });
   } catch (e) { next(e); }
