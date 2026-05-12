@@ -47,7 +47,8 @@ const BtnSm = (c='#0f172a') => ({
 // ═══ API LAYER ════════════════════════════════════════════════════════════════
 async function req(method, path, body) {
   const token = localStorage.getItem('cc_token');
-  const res = await fetch(`/api${path}`, {
+  const base = process.env.REACT_APP_API_URL || '';
+  const res = await fetch(`${base}/api${path}`, {
     method,
     headers: { 'Content-Type':'application/json', ...(token ? { Authorization:`Bearer ${token}` } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
