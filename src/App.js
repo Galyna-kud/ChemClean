@@ -141,6 +141,7 @@ const getAISettings = () => { try { const s = JSON.parse(localStorage.getItem('c
 const ROLE_PAGES = {
   'Адміністратор': null,
   'Приймальник':   ['orders', 'kanban', 'clients', 'services'],
+  'Технолог':      ['orders', 'kanban', 'clients', 'services', 'technologist'],
 };
 
 function Sidebar({ page, setPage, user, onLogout, activeCount, readyCount }) {
@@ -156,6 +157,9 @@ function Sidebar({ page, setPage, user, onLogout, activeCount, readyCount }) {
     { title:'Клієнти', items:[
       { key:'clients',      label:'Клієнти',         icon:'👥' },
       ...(ai.aiLoyalty ? [{ key:'loyalty', label:'Лояльність', icon:'★', ai:true }] : []),
+    ]},
+    { title:'Виробництво', items:[
+      { key:'technologist', label:'Технолог', icon:'⚙' },
     ]},
     ...(ai.aiForecast ? [{ title:'Аналітика', items:[{ key:'forecast', label:'Прогнозування', icon:'📈', ai:true }] }] : []),
     { title:'Адміністрація', items:[
